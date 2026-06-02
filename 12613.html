@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>光学仿真 - 弗朗禾费圆孔衍射</title>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Microsoft YaHei", Arial, sans-serif;
+      background: #0f172a;
+      color: #f9fafb;
+      overflow: hidden;
+      height: 100vh;
+    }
+    #app {
+      display: grid;
+      grid-template-rows: 55vh 45vh;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* 上方：3D 光路 */
+    #top {
+      position: relative;
+      border-bottom: 1px solid #334155;
+      background: #0f172a;
+    }
+    #three-container {
+      width: 100%;
+      height: 100%;
+    }
+    #info-overlay {
+      position: absolute;
+      left: 16px;
+      bottom: 12px;
+      background: rgba(15, 23, 42, 0.88);
+      border: 1px solid rgba(100, 116, 139, 0.4);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #e2e8f0;
+      max-width: 600px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #1e293b;
+      color: #93c5fd;
+      margin: 2px 4px 2px 0;
+      font-size: 11px;
+    }
+
+    /* 下方：左右分栏 */
+    #bottom {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      overflow: hidden;
+    }
+
+    .panel {
+      padding: 16px 20px;
+      overflow-y: auto;
+      background: #1e293b;
+    }
+    .panel-left {
+      border-right: 1px solid #334155;
+    }
+    .panel-right {
+      background: #111827;
+    }
+
+    h2 {
+      font-size: 14px;
+      color: #93c5fd;
+      margin: 14px 0 8px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #334155;
+    }
+    h2:first-child { margin-top: 0; }
+
+    label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #cbd5e1;
+      margin-bottom: 4px;
+    }
+    .value {
+      color: #fbbf24;
+      min-width: 60px;
+      text-align: right;
+    }
+    input[type="range"] {
+      width: 100%;
+      margin-bottom: 10px;
+      accent-color: #60a5fa;
+    }
+    select, button {
+      width: 100%;
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #f1f5f9;
+      margin-bottom: 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    button:hover { background: #334155; }
+
+    /* 两列参数布局 */
+    .param-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0 16px;
+    }
+    .param-group {
+      min-width: 0;
+    }
+
+    canvas#diffractionCanvas {
+      width: 100%;
+      max-width: 340px;
+      aspect-ratio: 1;
+      background: #000;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      display: block;
+      margin: 6px auto 0;
+    }
+    canvas#curveCanvas {
+      width: 100%;
+      height: 150px;
+      background: #030712;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      display: block;
+      margin: 12px auto 0;
+    }
+    .formula {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 11px;
+      color: #94a3b8;
+      line-height: 1.7;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <!-- 上方：3D 光路 -->
+  <div id="top">
+    <div id="three-container"></div>
+    <div id="info-overlay">
+      <span class="badge">3D 光路</span>
+      <span class="badge">实时追迹</span>
+      <span class="badge">Airy 斑</span>
+      <div id="derivedInfo"></div>
+    </div>
+  </div>
+
+  <!-- 下方：左参数 右衍射 -->
+  <div id="bottom">
+    <div class="panel panel-left">
+      <h2>实验模式</h2>
+      <select id="experimentType">
+        <option value="aperture">夫琅禾费圆孔衍射</option>
+        <option value="lens-aperture">透镜 + 圆孔衍射</option>
+        <option value="mirror-lens-aperture">反射镜 + 透镜 + 圆孔衍射</option>
+      </select>
+
+      <div class="param-grid">
+        <div class="param-group">
+          <h2>入射光参数</h2>
+          <label>波长 λ / nm <span class="value" id="wavelengthValue"></span></label>
+          <input id="wavelength" type="range" min="380" max="750" step="1" value="532" />
+          <label>光线数量 <span class="value" id="rayCountValue"></span></label>
+          <input id="rayCount" type="range" min="5" max="81" step="2" value="35" />
+          <label>光束半径 / mm <span class="value" id="beamRadiusValue"></span></label>
+          <input id="beamRadius" type="range" min="0.3" max="8" step="0.1" value="3" />
+          <label>入射角 / ° <span class="value" id="incidentAngleValue"></span></label>
+          <input id="incidentAngle" type="range" min="-18" max="18" step="0.5" value="0" />
+        </div>
+        <div class="param-group">
+          <h2>圆孔与屏幕</h2>
+          <label>圆孔直径 D / mm <span class="value" id="apertureValue"></span></label>
+          <input id="aperture" type="range" min="0.05" max="2.5" step="0.01" value="0.45" />
+          <label>屏距 z / m <span class="value" id="screenDistanceValue"></span></label>
+          <input id="screenDistance" type="range" min="0.2" max="5" step="0.05" value="1.2" />
+          <label>显示范围 / mm <span class="value" id="screenSizeValue"></span></label>
+          <input id="screenSize" type="range" min="1" max="30" step="0.5" value="10" />
+          <label>亮度 γ <span class="value" id="gammaValue"></span></label>
+          <input id="gamma" type="range" min="0.15" max="1.5" step="0.05" value="0.45" />
+        </div>
+      </div>
+
+      <h2>器件参数</h2>
+      <div class="param-grid">
+        <div class="param-group">
+          <label>透镜焦距 f / mm <span class="value" id="focalLengthValue"></span></label>
+          <input id="focalLength" type="range" min="30" max="500" step="5" value="180" />
+          <label>透镜位置 / cm <span class="value" id="lensXValue"></span></label>
+          <input id="lensX" type="range" min="-60" max="60" step="1" value="-20" />
+        </div>
+        <div class="param-group">
+          <label>圆孔位置 / cm <span class="value" id="apertureXValue"></span></label>
+          <input id="apertureX" type="range" min="-80" max="80" step="1" value="10" />
+          <button id="resetBtn">恢复默认参数</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel panel-right">
+      <h2>夫琅禾费圆孔衍射图样</h2>
+      <canvas id="diffractionCanvas" width="400" height="400"></canvas>
+      <h2>径向强度分布</h2>
+      <canvas id="curveCanvas" width="400" height="150"></canvas>
+      <div class="formula">
+        I(r) = I₀·[2J₁(u)/u]² &nbsp; u = πDr/(λz)<br/>
+        第一暗环：r₁ = 1.22λz/D
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+
+/* === 数学工具 === */
+var M = {
+  mmToM: function(v) { return v * 1e-3; },
+  nmToM: function(v) { return v * 1e-9; },
+  cmToScene: function(v) { return v / 10; },
+  mmToScene: function(v) { return v / 5; },
+  clamp: function(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); },
+
+  besselJ1: function(x) {
+    var ax = Math.abs(x);
+    if (ax < 1e-6) return x / 2;
+    if (ax < 12) {
+      var term = x / 2, sum = term;
+      for (var k = 1; k < 40; k++) {
+        term *= (-x * x / 4) / (k * (k + 1));
+        sum += term;
+        if (Math.abs(term) < 1e-12) break;
+      }
+      return sum;
+    }
+    var sign = x < 0 ? -1 : 1;
+    return Math.sqrt(2 / (Math.PI * ax)) * Math.cos(ax - 3 * Math.PI / 4) * sign;
+  },
+
+  wlColor: function(nm) {
+    var r = 0, g = 0, b = 0;
+    if (nm >= 380 && nm < 440) { r = -(nm - 440) / 60; b = 1; }
+    else if (nm < 490) { g = (nm - 440) / 50; b = 1; }
+    else if (nm < 510) { g = 1; b = -(nm - 510) / 20; }
+    else if (nm < 580) { r = (nm - 510) / 70; g = 1; }
+    else if (nm < 645) { r = 1; g = -(nm - 645) / 65; }
+    else if (nm <= 750) { r = 1; }
+    var f = 1;
+    if (nm < 420) f = 0.3 + 0.7 * (nm - 380) / 40;
+    else if (nm > 700) f = 0.3 + 0.7 * (750 - nm) / 50;
+    return new THREE.Color(r * f, g * f, b * f);
+  },
+
+  wlRGB: function(nm) {
+    var c = this.wlColor(nm);
+    return [Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255)];
+  }
+};
+
+/* === 参数读取 === */
+function getParams() {
+  return {
+    type: document.getElementById("experimentType").value,
+    wl: +document.getElementById("wavelength").value,
+    rays: +document.getElementById("rayCount").value,
+    beam: +document.getElementById("beamRadius").value,
+    angle: +document.getElementById("incidentAngle").value,
+    D: +document.getElementById("aperture").value,
+    z: +document.getElementById("screenDistance").value,
+    size: +document.getElementById("screenSize").value,
+    gamma: +document.getElementById("gamma").value,
+    f: +document.getElementById("focalLength").value,
+    lensXcm: +document.getElementById("lensX").value,
+    ax: +document.getElementById("apertureX").value
+  };
+}
+
+function updateLabels(p) {
+  document.getElementById("wavelengthValue").textContent = p.wl + " nm";
+  document.getElementById("rayCountValue").textContent = p.rays;
+  document.getElementById("beamRadiusValue").textContent = p.beam.toFixed(1) + " mm";
+  document.getElementById("incidentAngleValue").textContent = p.angle.toFixed(1) + "\u00B0";
+  document.getElementById("apertureValue").textContent = p.D.toFixed(2) + " mm";
+  document.getElementById("screenDistanceValue").textContent = p.z.toFixed(2) + " m";
+  document.getElementById("screenSizeValue").textContent = p.size.toFixed(1) + " mm";
+  document.getElementById("gammaValue").textContent = p.gamma.toFixed(2);
+  document.getElementById("focalLengthValue").textContent = p.f.toFixed(0) + " mm";
+  document.getElementById("lensXValue").textContent = p.lensXcm.toFixed(0) + " cm";
+  document.getElementById("apertureXValue").textContent = p.ax.toFixed(0) + " cm";
+}
+
+/* === 3D 场景初始化 === */
+var container = document.getElementById("three-container");
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f172a);
+
+var camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 200);
+
+var renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(container.clientWidth, container.clientHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+container.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+var dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+dirLight.position.set(5, 8, 6);
+scene.add(dirLight);
+
+// 网格
+var grid = new THREE.GridHelper(20, 40, 0x334155, 0x1e293b);
+grid.position.y = -1.8;
+scene.add(grid);
+
+// 光轴
+var axisGeo = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(-10, 0, 0),
+  new THREE.Vector3(12, 0, 0)
+]);
+scene.add(new THREE.Line(axisGeo, new THREE.LineBasicMaterial({ color: 0x475569 })));
+
+// 光源
+var sourceMesh = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.18, 0.18, 0.5, 32),
+  new THREE.MeshStandardMaterial({ color: 0xf97316, emissive: 0xf97316, emissiveIntensity: 0.5 })
+);
+sourceMesh.rotation.z = Math.PI / 2;
+sourceMesh.position.set(-5, 0, 0);
+scene.add(sourceMesh);
+
+// 光源发光点
+var glowMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(0.12, 16, 16),
+  new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+);
+glowMesh.position.set(-4.7, 0, 0);
+scene.add(glowMesh);
+
+// 器件组和光线组
+var elemGroup = new THREE.Group();
+scene.add(elemGroup);
+var rayGroup = new THREE.Group();
+scene.add(rayGroup);
+
+// 相机控制
+var camTheta = 0.3;
+var camPhi = 1.2;
+var camDist = 13;
+var isDragging = false;
+var prevMouse = { x: 0, y: 0 };
+
+function updateCamera() {
+  camera.position.x = camDist * Math.sin(camPhi) * Math.cos(camTheta);
+  camera.position.y = camDist * Math.cos(camPhi);
+  camera.position.z = camDist * Math.sin(camPhi) * Math.sin(camTheta);
+  camera.lookAt(1, 0, 0);
+}
+updateCamera();
+
+renderer.domElement.addEventListener("mousedown", function(e) {
+  isDragging = true;
+  prevMouse.x = e.clientX;
+  prevMouse.y = e.clientY;
+});
+window.addEventListener("mouseup", function() { isDragging = false; });
+window.addEventListener("mousemove", function(e) {
+  if (!isDragging) return;
+  var dx = e.clientX - prevMouse.x;
+  var dy = e.clientY - prevMouse.y;
+  camTheta += dx * 0.005;
+  camPhi = M.clamp(camPhi - dy * 0.005, 0.2, Math.PI - 0.2);
+  prevMouse.x = e.clientX;
+  prevMouse.y = e.clientY;
+  updateCamera();
+});
+renderer.domElement.addEventListener("wheel", function(e) {
+  e.preventDefault();
+  camDist = M.clamp(camDist + e.deltaY * 0.01, 4, 28);
+  updateCamera();
+}, { passive: false });
+/* === 文字精灵 === */
+function makeSprite(msg) {
+  var c = document.createElement("canvas");
+  c.width = 512; c.height = 128;
+  var ctx = c.getContext("2d");
+  ctx.fillStyle = "rgba(15,23,42,0.8)";
+  ctx.fillRect(0, 0, 512, 128);
+  ctx.font = "26px Microsoft YaHei, Arial";
+  ctx.fillStyle = "#f1f5f9";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(msg, 256, 64);
+  var tex = new THREE.CanvasTexture(c);
+  var mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  var s = new THREE.Sprite(mat);
+  s.scale.set(1.8, 0.45, 1);
+  return s;
+}
+
+/* === 构建光学器件 === */
+function buildElements(p) {
+  elemGroup.clear();
+
+  var srcX = -5;
+  var lensX = M.cmToScene(p.lensXcm);
+  var apertureX = M.cmToScene(p.ax);
+  var screenX = apertureX + M.clamp(p.z * 2.2, 1.5, 8);
+
+  var pos = {
+    srcX: srcX,
+    mirrorX: srcX + 1.5,
+    lensX: lensX,
+    apertureX: apertureX,
+    screenX: screenX
+  };
+
+  // 光源标签
+  var srcLb = makeSprite("激光光源");
+  srcLb.position.set(srcX, 0.7, 0);
+  elemGroup.add(srcLb);
+
+  // 反射镜
+  if (p.type === "mirror-lens-aperture") {
+    var mirrorGeo = new THREE.BoxGeometry(0.07, 2.2, 2.2);
+    var mirrorMat = new THREE.MeshStandardMaterial({ color: 0xd1d5db, metalness: 0.9, roughness: 0.08 });
+    var mirror = new THREE.Mesh(mirrorGeo, mirrorMat);
+    mirror.position.set(pos.mirrorX, 0, 0);
+    mirror.rotation.y = Math.PI / 6;
+    elemGroup.add(mirror);
+
+    var mlb = makeSprite("反射镜");
+    mlb.position.set(pos.mirrorX, -1.5, 0);
+    elemGroup.add(mlb);
+  }
+
+  // 透镜
+  if (p.type.indexOf("lens") !== -1) {
+    // 透镜圆盘
+    var lensDisk = new THREE.Mesh(
+      new THREE.CircleGeometry(1.1, 64),
+      new THREE.MeshPhysicalMaterial({
+        color: 0x60a5fa, transparent: true, opacity: 0.2,
+        side: THREE.DoubleSide, roughness: 0.05
+      })
+    );
+    lensDisk.rotation.y = Math.PI / 2;
+    lensDisk.position.x = pos.lensX;
+    elemGroup.add(lensDisk);
+
+    // 透镜边框
+    var lensRing = new THREE.Mesh(
+      new THREE.TorusGeometry(1.1, 0.03, 16, 64),
+      new THREE.MeshBasicMaterial({ color: 0x93c5fd })
+    );
+    lensRing.rotation.y = Math.PI / 2;
+    lensRing.position.x = pos.lensX;
+    elemGroup.add(lensRing);
+
+    // 焦点标记
+    var fScene = M.mmToScene(p.f);
+    var focalDot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06, 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+    );
+    focalDot.position.set(pos.lensX + fScene, 0, 0);
+    elemGroup.add(focalDot);
+
+    var llb = makeSprite("透镜 f=" + p.f + "mm");
+    llb.position.set(pos.lensX, 1.5, 0);
+    elemGroup.add(llb);
+  }
+
+  // 圆孔光阑
+  var outerR = 1.4;
+  var holeR = Math.max(0.03, M.mmToScene(p.D) * 0.8);
+
+  var shape = new THREE.Shape();
+  shape.absarc(0, 0, outerR, 0, Math.PI * 2, false);
+  var holePath = new THREE.Path();
+  holePath.absarc(0, 0, holeR, 0, Math.PI * 2, true);
+  shape.holes.push(holePath);
+
+  var apMesh = new THREE.Mesh(
+    new THREE.ShapeGeometry(shape, 96),
+    new THREE.MeshStandardMaterial({ color: 0x4b5563, side: THREE.DoubleSide, metalness: 0.3, roughness: 0.4 })
+  );
+  apMesh.rotation.y = Math.PI / 2;
+  apMesh.position.x = pos.apertureX;
+  elemGroup.add(apMesh);
+
+  // 圆孔高亮环
+  var apRing = new THREE.Mesh(
+    new THREE.TorusGeometry(holeR, 0.02, 16, 96),
+    new THREE.MeshBasicMaterial({ color: 0xfacc15 })
+  );
+  apRing.rotation.y = Math.PI / 2;
+  apRing.position.x = pos.apertureX + 0.005;
+  elemGroup.add(apRing);
+
+  var alb = makeSprite("圆孔 D=" + p.D.toFixed(2) + "mm");
+  alb.position.set(pos.apertureX, -1.7, 0);
+  elemGroup.add(alb);
+
+  // 观察屏
+  var scrMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.2, 3.2),
+    new THREE.MeshStandardMaterial({ color: 0x1e293b, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+  );
+  scrMesh.rotation.y = Math.PI / 2;
+  scrMesh.position.x = pos.screenX;
+  elemGroup.add(scrMesh);
+
+  var scrBorder = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.PlaneGeometry(3.2, 3.2)),
+    new THREE.LineBasicMaterial({ color: 0x94a3b8 })
+  );
+  scrBorder.rotation.y = Math.PI / 2;
+  scrBorder.position.x = pos.screenX + 0.005;
+  elemGroup.add(scrBorder);
+
+  var slb = makeSprite("观察屏");
+  slb.position.set(pos.screenX, 1.9, 0);
+  elemGroup.add(slb);
+
+  return pos;
+}
+
+/* === 光线与平面交点 === */
+function hitPlaneX(origin, dir, x) {
+  if (Math.abs(dir.x) < 1e-6) return null;
+  var t = (x - origin.x) / dir.x;
+  if (t < 0) return null;
+  return origin.clone().add(dir.clone().multiplyScalar(t));
+}
+
+/* === 光线追迹 === */
+function traceRays(p, pos) {
+  rayGroup.clear();
+
+  var color = M.wlColor(p.wl);
+  var passMat = new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: 0.72 });
+  var blockMat = new THREE.LineBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.18 });
+  var beamR = M.mmToScene(p.beam);
+  var ang = THREE.MathUtils.degToRad(p.angle);
+  var apR = Math.max(0.03, M.mmToScene(p.D) * 0.8);
+
+  for (var i = 0; i < p.rays; i++) {
+    var t = p.rays === 1 ? 0 : (i / (p.rays - 1)) * 2 - 1;
+    var y0 = t * beamR;
+    var z0 = 0.12 * Math.sin(i * 2.3);
+
+    var cur = new THREE.Vector3(pos.srcX, y0, z0);
+    var dir = new THREE.Vector3(Math.cos(ang), Math.sin(ang), 0).normalize();
+    var pts = [cur.clone()];
+
+    // 反射镜
+    if (p.type === "mirror-lens-aperture") {
+      var mHit = hitPlaneX(cur, dir, pos.mirrorX);
+      if (mHit) {
+        pts.push(mHit.clone());
+        cur = mHit;
+        dir = new THREE.Vector3(Math.abs(dir.x), -dir.y * 0.7, dir.z * 0.5).normalize();
+      }
+    }
+
+    // 透镜（薄透镜近似）
+    if (p.type.indexOf("lens") !== -1) {
+      var lHit = hitPlaneX(cur, dir, pos.lensX);
+      if (lHit) {
+        pts.push(lHit.clone());
+        cur = lHit;
+        var fScene = M.mmToScene(p.f);
+        var focalPt = new THREE.Vector3(pos.lensX + fScene, 0, 0);
+        dir = focalPt.clone().sub(cur).normalize();
+        if (dir.x < 0.05) { dir.x = 0.05; dir.normalize(); }
+      }
+    }
+
+    // 圆孔
+    var apHit = hitPlaneX(cur, dir, pos.apertureX);
+    if (apHit) {
+      pts.push(apHit.clone());
+      var dist = Math.sqrt(apHit.y * apHit.y + apHit.z * apHit.z);
+      if (dist <= apR) {
+        cur = apHit;
+        var scrHit = hitPlaneX(cur, dir, pos.screenX);
+        if (scrHit) pts.push(scrHit.clone());
+        rayGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), passMat));
+      } else {
+        rayGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), blockMat));
+      }
+    } else {
+      var scrHit2 = hitPlaneX(cur, dir, pos.screenX);
+      if (scrHit2) pts.push(scrHit2.clone());
+      rayGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), passMat));
+    }
+  }
+}
+/* === 衍射强度 === */
+function airyI(rMm, p) {
+  var lam = M.nmToM(p.wl);
+  var D = M.mmToM(p.D);
+  var u = Math.PI * D * M.mmToM(rMm) / (lam * p.z);
+  if (Math.abs(u) < 1e-8) return 1;
+  var j1 = M.besselJ1(u);
+  return Math.pow(2 * j1 / u, 2);
+}
+
+function firstDarkR(p) {
+  var lam = M.nmToM(p.wl);
+  var D = M.mmToM(p.D);
+  return 1.22 * lam * p.z / D * 1000;
+}
+
+/* === 绘制衍射图样 === */
+function drawDiffraction(p) {
+  var canvas = document.getElementById("diffractionCanvas");
+  var ctx = canvas.getContext("2d");
+  var w = canvas.width, h = canvas.height;
+  var img = ctx.createImageData(w, h);
+  var cx = w / 2, cy = h / 2;
+  var rgb = M.wlRGB(p.wl);
+  var maxR = p.size / 2;
+
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      var dx = (x - cx) / cx * maxR;
+      var dy = (y - cy) / cy * maxR;
+      var r = Math.sqrt(dx * dx + dy * dy);
+      var I = airyI(r, p);
+      I = Math.pow(M.clamp(I, 0, 1), p.gamma);
+      var idx = (y * w + x) * 4;
+      img.data[idx]     = Math.round(rgb[0] * I);
+      img.data[idx + 1] = Math.round(rgb[1] * I);
+      img.data[idx + 2] = Math.round(rgb[2] * I);
+      img.data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // 第一暗环
+  var r1 = firstDarkR(p);
+  var r1px = r1 / maxR * cx;
+  if (r1px > 3 && r1px < cx * 0.9) {
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r1px, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(255,255,255,0.8)";
+    ctx.font = "12px Microsoft YaHei";
+    ctx.fillText("r\u2081=" + r1.toFixed(3) + "mm", cx + r1px * 0.7 + 3, cy - r1px * 0.7 - 3);
+  }
+}
+
+/* === 绘制径向曲线 === */
+function drawCurve(p) {
+  var canvas = document.getElementById("curveCanvas");
+  var ctx = canvas.getContext("2d");
+  var w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#030712";
+  ctx.fillRect(0, 0, w, h);
+
+  var mg = 36;
+  var maxR = p.size / 2;
+  var plotW = w - 2 * mg;
+  var plotH = h - 2 * mg;
+
+  // 网格
+  ctx.strokeStyle = "#1e293b";
+  ctx.lineWidth = 1;
+  for (var i = 0; i <= 4; i++) {
+    var gy = mg + i * plotH / 4;
+    ctx.beginPath(); ctx.moveTo(mg, gy); ctx.lineTo(w - mg, gy); ctx.stroke();
+  }
+  for (var j = 0; j <= 5; j++) {
+    var gx = mg + j * plotW / 5;
+    ctx.beginPath(); ctx.moveTo(gx, mg); ctx.lineTo(gx, h - mg); ctx.stroke();
+  }
+
+  // 坐标轴
+  ctx.strokeStyle = "#64748b";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(mg, mg); ctx.lineTo(mg, h - mg); ctx.lineTo(w - mg, h - mg);
+  ctx.stroke();
+
+  // 曲线
+  var rgb = M.wlRGB(p.wl);
+  ctx.strokeStyle = "rgb(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ")";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  for (var k = 0; k <= plotW; k++) {
+    var r = k / plotW * maxR;
+    var I = Math.pow(M.clamp(airyI(r, p), 0, 1), p.gamma);
+    var px = mg + k;
+    var py = h - mg - I * plotH;
+    if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
+  // 曲线填充
+  ctx.lineTo(w - mg, h - mg);
+  ctx.lineTo(mg, h - mg);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ",0.07)";
+  ctx.fill();
+
+  // 第一暗环标记
+  var r1 = firstDarkR(p);
+  var x1 = mg + r1 / maxR * plotW;
+  if (x1 > mg + 3 && x1 < w - mg - 3) {
+    ctx.strokeStyle = "rgba(250,204,21,0.7)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(x1, mg); ctx.lineTo(x1, h - mg); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#fbbf24";
+    ctx.font = "11px Microsoft YaHei";
+    ctx.fillText("r\u2081=" + r1.toFixed(3) + "mm", x1 + 3, mg + 12);
+  }
+
+  // 标注
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "11px Microsoft YaHei";
+  ctx.fillText("0", mg - 10, h - mg + 13);
+  ctx.fillText(maxR.toFixed(1) + "mm", w - mg - 22, h - mg + 13);
+  ctx.fillText("I/I\u2080", mg - 4, mg - 6);
+  ctx.fillText("1", mg - 14, mg + 4);
+  ctx.fillText("r (mm)", w / 2 - 16, h - 3);
+}
+
+/* === 信息面板 === */
+function updateInfo(p) {
+  var r1 = firstDarkR(p);
+  var lam = M.nmToM(p.wl);
+  var D = M.mmToM(p.D);
+  var fresnel = Math.pow(D / 2, 2) / (lam * p.z);
+  var html = "<br/>";
+  html += "\u03BB=" + p.wl + "nm &nbsp; D=" + p.D.toFixed(2) + "mm &nbsp; z=" + p.z.toFixed(2) + "m<br/>";
+  html += "r\u2081 = <b style='color:#fbbf24'>" + r1.toFixed(4) + " mm</b> &nbsp; ";
+  html += "N<sub>F</sub>=" + fresnel.toFixed(3);
+  if (fresnel < 1) {
+    html += " <span style='color:#4ade80'>\u2713 \u8FDC\u573A</span>";
+  } else {
+    html += " <span style='color:#fbbf24'>\u26A0 \u8FD1\u573A</span>";
+  }
+  document.getElementById("derivedInfo").innerHTML = html;
+}
+
+/* === 主更新 === */
+function fullUpdate() {
+  var p = getParams();
+  updateLabels(p);
+  var pos = buildElements(p);
+  traceRays(p, pos);
+  drawDiffraction(p);
+  drawCurve(p);
+  updateInfo(p);
+}
+
+/* === 事件绑定 === */
+var allInputs = document.querySelectorAll("input, select");
+for (var i = 0; i < allInputs.length; i++) {
+  allInputs[i].addEventListener("input", fullUpdate);
+}
+
+document.getElementById("resetBtn").addEventListener("click", function() {
+  document.getElementById("experimentType").value = "aperture";
+  document.getElementById("wavelength").value = 532;
+  document.getElementById("rayCount").value = 35;
+  document.getElementById("beamRadius").value = 3;
+  document.getElementById("incidentAngle").value = 0;
+  document.getElementById("aperture").value = 0.45;
+  document.getElementById("screenDistance").value = 1.2;
+  document.getElementById("screenSize").value = 10;
+  document.getElementById("gamma").value = 0.45;
+  document.getElementById("focalLength").value = 180;
+  document.getElementById("lensX").value = -20;
+  document.getElementById("apertureX").value = 10;
+  fullUpdate();
+});
+
+/* === 窗口自适应 === */
+window.addEventListener("resize", function() {
+  var w = container.clientWidth;
+  var h = container.clientHeight;
+  if (w > 0 && h > 0) {
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+  }
+});
+
+/* === 渲染循环 === */
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+
+/* === 启动 === */
+fullUpdate();
+animate();
+
+</script>
+</body>
+</html>
